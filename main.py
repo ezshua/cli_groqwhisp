@@ -7,6 +7,20 @@ import pyautogui
 import pyperclip
 from groq import Groq
 
+# Активация поддержки ANSI-последовательностей в консоли Windows
+os.system('')
+
+# Константы для оформления текста
+RESET = "\033[0m"
+BOLD = "\033[1m"
+ITALIC = "\033[3m"
+NORMAL = "\033[22m"  # Отмена жирного шрифта
+
+RED = "\033[91m"
+GREEN = "\033[92m"
+BLUE = "\033[94m"
+
+
 # Set up Groq client
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
@@ -28,11 +42,11 @@ def record_audio(sample_rate=16000, channels=1, chunk=1024):
 
     # show_pressed_keys()  # Start showing pressed keys in the terminal
 
-    print("Нажимаем и держим кнопку ESC для старта записи аудио...")
+    # print("Нажимаем и держим кнопку ESC для старта записи аудио...")
     frames = []
 
     keyboard.wait("esc")  # Wait for ESC button to be pressed
-    print("Запись... (Отпустите ESC для остановки)")
+    print(f"{RED}{BOLD}Запись... (Отпустите ESC для остановки){RESET}")
 
     while keyboard.is_pressed("esc"):
         data = stream.read(chunk)
@@ -102,6 +116,8 @@ def copy_transcription_to_clipboard(text):
 
 def main():
     while True:
+
+        print(f"\n{ITALIC}Готово для следующей записи. Нажмите и удерживайте ESC для начала.{RESET}")
         # Record audio
         frames, sample_rate = record_audio()
 
@@ -109,23 +125,21 @@ def main():
         temp_audio_file = save_audio(frames, sample_rate)
 
         # Transcribe audio
-        print("Транскрибируем аудио...")
+        print(f"{ITALIC}Транскрибируем аудио...{RESET}")
         transcription = transcribe_audio(temp_audio_file)
 
         # Copy transcription to clipboard
         if transcription:
-            print("\Транскрипция:")
-            print(transcription)
-            print("Копируем транскрипцию в буфер обмена...")
+            print(f"\n{BLUE}{ITALIC}Транскрипция:{RESET}")
+            print(f"\t{GREEN}{BOLD}{transcription}{RESET}")
+            print(f"\n{ITALIC}Копируем транскрипцию в буфер обмена...{RESET}")
             copy_transcription_to_clipboard(transcription)
-            print("Транскрипция скопирована в буфер обмена и вставлена в приложение.")
+            print(f"{BOLD}Транскрипция скопирована в буфер обмена и вставлена в приложение.{RESET}")
         else:
-            print("Транскрибация не удалась.")
+            print(f"{RED}Транскрибация не удалась.{RESET}")
 
         # Clean up temporary file
         os.unlink(temp_audio_file)
-
-        print("\nГотово для следующей записи. Нажмите ESC для начала.")
 
 
 if __name__ == "__main__":
