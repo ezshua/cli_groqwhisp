@@ -10,6 +10,9 @@ from groq import Groq
 # Set up Groq client
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
+# заранее надо біло установить ключ в переменные окружения через консоль, например:
+# setx GROQ_API_KEY "your-api-key-here"
+
 def record_audio(sample_rate=16000, channels=1, chunk=1024):
     """
     Record audio from the microphone while the PAUSE button is held down.
@@ -23,19 +26,19 @@ def record_audio(sample_rate=16000, channels=1, chunk=1024):
         frames_per_buffer=chunk,
     )
 
-    show_pressed_keys()  # Start showing pressed keys in the terminal
+    # show_pressed_keys()  # Start showing pressed keys in the terminal
 
-    print("Press and hold the ESC button to start recording...")
+    print("Нажимаем и держим кнопку ESC для старта записи аудио...")
     frames = []
 
     keyboard.wait("esc")  # Wait for ESC button to be pressed
-    print("Recording... (Release ESC to stop)")
+    print("Запись... (Отпустите ESC для остановки)")
 
     while keyboard.is_pressed("esc"):
         data = stream.read(chunk)
         frames.append(data)
 
-    print("Recording finished.")
+    print("Запись завершена.")
     stream.stop_stream()
     stream.close()
     p.terminate()
@@ -85,7 +88,7 @@ def transcribe_audio(audio_file_path):
             )
         return transcription  # This is now directly the transcription text
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
+        print(f"Ашипка транскрибации аудио: {str(e)}")
         return None
 
 
@@ -106,23 +109,23 @@ def main():
         temp_audio_file = save_audio(frames, sample_rate)
 
         # Transcribe audio
-        print("Transcribing...")
+        print("Транскрибируем аудио...")
         transcription = transcribe_audio(temp_audio_file)
 
         # Copy transcription to clipboard
         if transcription:
-            print("\nTranscription:")
+            print("\Транскрипция:")
             print(transcription)
-            print("Copying transcription to clipboard...")
+            print("Копируем транскрипцию в буфер обмена...")
             copy_transcription_to_clipboard(transcription)
-            print("Transcription copied to clipboard and pasted into the application.")
+            print("Транскрипция скопирована в буфер обмена и вставлена в приложение.")
         else:
-            print("Transcription failed.")
+            print("Транскрибация не удалась.")
 
         # Clean up temporary file
         os.unlink(temp_audio_file)
 
-        print("\nReady for next recording. Press ESC to start.")
+        print("\nГотово для следующей записи. Нажмите ESC для начала.")
 
 
 if __name__ == "__main__":

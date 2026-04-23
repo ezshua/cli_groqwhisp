@@ -54,10 +54,16 @@
 
 ## Usage
 
-1. Run the script:
+1. Run the script from console:
    ```
    python main.py
    ```
+   or 
+   создайте ярлык для омандного файла 
+   ```
+   startw.bat
+   ```
+   и запускайте его, а по окончанию работы закрывайте консольное окно
 
 2. Press and hold the ESC key to start recording.
 3. Release the ESC key to stop recording and start transcription.
