@@ -1,10 +1,10 @@
-# Groq Whisperer: Voice-to-Text Transcription Tool
+# Groq Whisperer: Voice-to-Text CLI Transcription Tool
 
 **Groq Whisperer** is a Python-based application that allows users to record audio and transcribe it to text using Groq's Whisper implementation. The transcribed text is automatically copied to the clipboard for easy pasting into other applications.
 
 ## Features
 
-- Record audio by holding down the **PAUSE** key
+- Record audio by holding down the **ESC** key
 - Transcribe recorded audio to text using Groq's API
 - Automatically copy transcription to clipboard
 - Continuous operation for multiple recordings
@@ -18,7 +18,7 @@
 
 1. Clone the repository:
    ```
-   git clone https://github.com/KennyVaneetvelde/groq_whisperer
+   git clone https://github.com/ezshua/cli_groqwhisp.git
    cd whisperer
    ```
 
@@ -59,8 +59,8 @@
    python main.py
    ```
 
-2. Press and hold the PAUSE key to start recording.
-3. Release the PAUSE key to stop recording and start transcription.
+2. Press and hold the ESC key to start recording.
+3. Release the ESC key to stop recording and start transcription.
 4. The transcribed text will be automatically copied to your clipboard.
 5. Repeat steps 2-4 for additional recordings.
 
