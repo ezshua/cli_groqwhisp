@@ -10,7 +10,6 @@ from groq import Groq
 # Set up Groq client
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-
 def record_audio(sample_rate=16000, channels=1, chunk=1024):
     """
     Record audio from the microphone while the PAUSE button is held down.
@@ -24,13 +23,15 @@ def record_audio(sample_rate=16000, channels=1, chunk=1024):
         frames_per_buffer=chunk,
     )
 
-    print("Press and hold the PAUSE button to start recording...")
+    show_pressed_keys()  # Start showing pressed keys in the terminal
+
+    print("Press and hold the ESC button to start recording...")
     frames = []
 
-    keyboard.wait("pause")  # Wait for PAUSE button to be pressed
-    print("Recording... (Release PAUSE to stop)")
+    keyboard.wait("esc")  # Wait for ESC button to be pressed
+    print("Recording... (Release ESC to stop)")
 
-    while keyboard.is_pressed("pause"):
+    while keyboard.is_pressed("esc"):
         data = stream.read(chunk)
         frames.append(data)
 
@@ -41,6 +42,19 @@ def record_audio(sample_rate=16000, channels=1, chunk=1024):
 
     return frames, sample_rate
 
+def show_pressed_keys():
+    """
+    Показывает имена нажатых клавиш в терминале в реальном времени.
+    Для выхода нажмите ESC.
+    """
+    print("Нажимайте клавиши (ESC для выхода):")
+    while True:
+        event = keyboard.read_event()
+        if event.event_type == keyboard.KEY_DOWN:
+            print(f"Key pressed: {event.name}")
+            if event.name == "esc":
+                print("Выход из режима отображения клавиш.")
+                break
 
 def save_audio(frames, sample_rate):
     """
@@ -64,10 +78,10 @@ def transcribe_audio(audio_file_path):
         with open(audio_file_path, "rb") as file:
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename(audio_file_path), file.read()),
-                model="whisper-large-v3",
+                model="whisper-large-v3-turbo",
                 prompt="""The audio is by a programmer discussing programming issues, the programmer mostly uses python and might mention python libraries or reference code in his speech.""",
                 response_format="text",
-                language="en",
+                # language="en",
             )
         return transcription  # This is now directly the transcription text
     except Exception as e:
@@ -108,7 +122,7 @@ def main():
         # Clean up temporary file
         os.unlink(temp_audio_file)
 
-        print("\nReady for next recording. Press PAUSE to start.")
+        print("\nReady for next recording. Press ESC to start.")
 
 
 if __name__ == "__main__":
