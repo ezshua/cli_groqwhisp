@@ -19,7 +19,7 @@
 1. Clone the repository:
    ```
    git clone https://github.com/ezshua/cli_groqwhisp.git
-   cd whisperer
+   cd cli_groqwhisp
    ```
 
 2. Create a virtual environment:
