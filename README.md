@@ -4,7 +4,7 @@
 
 ## Features
 
-- Record audio by holding down the **ESC** key
+- Record audio by holding down the **Ctrl+Alt+V** key combination (по умолчанию, можно изменить в `main.py`)
 - Transcribe recorded audio to text using Groq's API
 - Automatically copy transcription to clipboard
 - Continuous operation for multiple recordings
@@ -65,8 +65,8 @@
    ```
    и запускайте его, а по окончанию работы закрывайте консольное окно
 
-2. Press and hold the ESC key to start recording.
-3. Release the ESC key to stop recording and start transcription.
+2. Press and hold the **Ctrl+Alt+V** key combination to start recording.
+3. Release the **Ctrl+Alt+V** key combination to stop recording and start transcription.
 4. The transcribed text will be automatically copied to your clipboard.
 5. Repeat steps 2-4 for additional recordings.
 

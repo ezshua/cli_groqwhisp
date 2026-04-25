@@ -6,12 +6,13 @@ import keyboard
 import pyautogui
 import pyperclip
 from groq import Groq
+from keyb import show_pressed_keys, media_pressed_keys
 
 # Активация поддержки ANSI-последовательностей в консоли Windows
 os.system('')
 
 # Константы для оформления текста
-RESET = "\033[0m"
+RESET = "\033[0m" # Сброс всех атрибутов
 BOLD = "\033[1m"
 ITALIC = "\033[3m"
 NORMAL = "\033[22m"  # Отмена жирного шрифта
@@ -20,11 +21,13 @@ RED = "\033[91m"
 GREEN = "\033[92m"
 BLUE = "\033[94m"
 
+# Комбинация клавиш для начала/остановки записи
+RECORD_KEY_COMBINATION = "ctrl+alt+r" # Вы можете изменить эту комбинацию на любую другую, например "shift+f10"
 
 # Set up Groq client
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-# заранее надо біло установить ключ в переменные окружения через консоль, например:
+# заранее надо было установить ключ в переменные окружения через консоль, например:
 # setx GROQ_API_KEY "your-api-key-here"
 
 def record_audio(sample_rate=16000, channels=1, chunk=1024):
@@ -40,15 +43,13 @@ def record_audio(sample_rate=16000, channels=1, chunk=1024):
         frames_per_buffer=chunk,
     )
 
-    # show_pressed_keys()  # Start showing pressed keys in the terminal
-
     # print("Нажимаем и держим кнопку ESC для старта записи аудио...")
     frames = []
+    
+    keyboard.wait(RECORD_KEY_COMBINATION)  # Ждем нажатия комбинации клавиш
+    print(f"{RED}{BOLD}Запись... (Отпустите {RECORD_KEY_COMBINATION.upper()} для остановки){RESET}")
 
-    keyboard.wait("esc")  # Wait for ESC button to be pressed
-    print(f"{RED}{BOLD}Запись... (Отпустите ESC для остановки){RESET}")
-
-    while keyboard.is_pressed("esc"):
+    while keyboard.is_pressed(RECORD_KEY_COMBINATION):
         data = stream.read(chunk)
         frames.append(data)
 
@@ -58,20 +59,6 @@ def record_audio(sample_rate=16000, channels=1, chunk=1024):
     p.terminate()
 
     return frames, sample_rate
-
-def show_pressed_keys():
-    """
-    Показывает имена нажатых клавиш в терминале в реальном времени.
-    Для выхода нажмите ESC.
-    """
-    print("Нажимайте клавиши (ESC для выхода):")
-    while True:
-        event = keyboard.read_event()
-        if event.event_type == keyboard.KEY_DOWN:
-            print(f"Key pressed: {event.name}")
-            if event.name == "esc":
-                print("Выход из режима отображения клавиш.")
-                break
 
 def save_audio(frames, sample_rate):
     """
@@ -115,9 +102,12 @@ def copy_transcription_to_clipboard(text):
 
 
 def main():
+      
+    # media_pressed_keys()  # Start showing pressed keys in the terminal
+    
     while True:
 
-        print(f"\n{ITALIC}Готово для следующей записи. Нажмите и удерживайте ESC для начала.{RESET}")
+        print(f"\n{ITALIC}Готово для следующей записи. Нажмите и удерживайте {RECORD_KEY_COMBINATION.upper()} для начала.{RESET}")
         # Record audio
         frames, sample_rate = record_audio()
 
