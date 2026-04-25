@@ -183,7 +183,7 @@ def record_audio(sample_rate=16000, channels=1, chunk=1024):
     stream.stop_stream()
     stream.close()
     p.terminate()
-    print(f"{ITALIC}{RED}Запись завершена.{RESET}")
+    print(f"{ITALIC}{YELLOW}Запись завершена.{RESET}")
     return frames, sample_rate
 
 
