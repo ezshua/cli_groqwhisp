@@ -201,20 +201,48 @@ def save_audio(frames, sample_rate):
 
 def transcribe_audio(audio_file_path):
     """Транскрибирует аудио через Groq Whisper."""
+    if (lang_index == 1 and model_index == 1):  
+        # en + "whisper-large-v3" = перевод, а не транскрипция
+        try:
+            ln = get_language() 
+            pr = "The audio is a common discussions with elements of technical terms and science language. Translate this to English."
+            md = get_model()
+            print(f"{ITALIC}ПЕРЕВОД {md} + {ln} + {pr}{RESET}")
+            with open(audio_file_path, "rb") as file:
+                translations = client.audio.translations.create(
+                    file=(os.path.basename(audio_file_path), file.read()),
+                    model=get_model(),
+                    prompt="The audio is a common discussions with elements of technical terms and science language. Translate this to English.",
+                    # prompt="""The audio is by a programmer discussing programming issues, 
+                    #           the programmer mostly uses python and might mention python 
+                    #           libraries or reference code in his speech.""",
+                    response_format="text",
+                )
+            return translations
+        except Exception as e:
+            print(f"{ITALIC}{RED}Ошибка перевода: {str(e)}{RESET}")
+            return None
+        
+    # Иначе — обычная транскрипция, со случайным переводом иногда при en + "whisper-large-v3-turbo", так как модель может сама решить, что нужно перевести для лучшего результата
     try:
+        ln = get_language() 
+        pr = "The audio is a common discussions with elements of technical terms and science language."
+        md = get_model()
+        print(f"{ITALIC}ТРАНСКРИПЦИЯ {md} + {ln} + {pr}{RESET}")
         with open(audio_file_path, "rb") as file:
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename(audio_file_path), file.read()),
                 model=get_model(),
-                prompt="""The audio is by a programmer discussing programming issues, 
-                          the programmer mostly uses python and might mention python 
-                          libraries or reference code in his speech.""",
+                prompt="The audio is a common discussions with elements of technical terms and science language.",
+                # prompt="""The audio is by a programmer discussing programming issues, 
+                #           the programmer mostly uses python and might mention python 
+                #           libraries or reference code in his speech.""",
                 response_format="text",
                 language=get_language() if INPUT_MODE == "media" else "ru",
             )
         return transcription
     except Exception as e:
-        print(f"{RED}Ошибка транскрибации: {str(e)}{RESET}")
+        print(f"{ITALIC}{RED}Ошибка транскрибации: {str(e)}{RESET}")
         return None
 
 
