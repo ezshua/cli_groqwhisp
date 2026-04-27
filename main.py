@@ -72,6 +72,9 @@ lang_index  = 0
 model_index = 0
 user32      = ctypes.windll.user32
 
+# pyautogui.PAUSE = 0.5
+# pyautogui.FAILSAFE = True
+
 ALL_MEDIA_KEYS = {
     MEDIA_KEY_RECORD:       "Record",
     MEDIA_KEY_MODEL_SWITCH: "Model Switch",
@@ -199,8 +202,8 @@ def save_audio(frames, sample_rate):
         return temp_audio.name
 
 
-def transcribe_audio(audio_file_path):
-    """Транскрибирует аудио через Groq Whisper."""
+def translate_audio(audio_file_path):
+    """Переводит аудио через Groq Whisper."""
     if (lang_index == 1 and model_index == 1):  
         # en + "whisper-large-v3" = перевод, а не транскрипция
         try:
@@ -219,6 +222,7 @@ def transcribe_audio(audio_file_path):
             print(f"{ITALIC}{RED}Ошибка перевода: {str(e)}{RESET}")
             return None
         
+def transcribe_audio(audio_file_path):
     # Иначе — обычная транскрипция, со случайным переводом иногда при en + "whisper-large-v3-turbo", так как модель может сама решить, что нужно перевести для лучшего результата
     try:
         with open(audio_file_path, "rb") as file:
@@ -283,18 +287,28 @@ def main():
         temp_audio_file = save_audio(frames, sample_rate)
 
         # Транскрипция
-        print(f"{ITALIC}{CYAN}Транскрибируем аудио ({get_model()}, {get_language().upper()})...{RESET}")
-        transcription = transcribe_audio(temp_audio_file)
+        if lang_index == 1 and model_index == 1:
+            print(f"{ITALIC}{CYAN}Переводим аудио ({get_model()}, {get_language().upper()})...{RESET}")
+            result = translate_audio(temp_audio_file)
+        else:
+            print(f"{ITALIC}{CYAN}Транскрибируем аудио ({get_model()}, {get_language().upper()})...{RESET}")
+            result = transcribe_audio(temp_audio_file)
 
         # Результат
-        if transcription:
-            print(f"\n{BLUE}{ITALIC}Транскрипция:{RESET}")
-            print(f"\t{GREEN}{BOLD}{transcription}{RESET}")
+        if result:
+            if lang_index == 1 and model_index == 1:
+                print(f"\n{BLUE}{ITALIC}Перевод:{RESET}")
+            else:
+                print(f"\n{BLUE}{ITALIC}Транскрипция:{RESET}")
+            print(f"\t{GREEN}{BOLD}{result}{RESET}")
             # print(f"\n{ITALIC}Копируем в буфер обмена...{RESET}")
-            copy_transcription_to_clipboard(transcription)
-            print(f"\n{ITALIC}{DGRAY}Транскрипция скопирована и вставлена{RESET}")
+            copy_transcription_to_clipboard(result)
+            if lang_index == 1 and model_index == 1:
+                print(f"\n{ITALIC}{DGRAY}Перевод скопирован и вставлен{RESET}")
+            else:
+                print(f"\n{ITALIC}{DGRAY}Транскрипция скопирована и вставлена{RESET}")
         else:
-            print(f"{RED}Транскрибация не удалась.{RESET}")
+            print(f"{RED}Обработка не удалась.{RESET}")
 
         # Удаление временного файла
         os.unlink(temp_audio_file)
