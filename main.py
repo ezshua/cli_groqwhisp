@@ -256,9 +256,11 @@ def copy_transcription_to_clipboard(text):
 def main():
     import time
 
+    print(f"Установить ключ в переменную окружения заранее через консоль:")
+    print(f"setx GROQ_API_KEY \"your-api-key-here\"\n")
     if INPUT_MODE == "media":
         print(f"{BOLD}Управление:{RESET}")
-        print(f"  {BOLD} ⏯   Play/Pause{RESET}  — удерживать для записи, отпустить — отправить")
+        print(f"  {BOLD} ⏯   Play/Pause{RESET}   — удерживать для записи, отпустить — отправить")
         print(f"  {BOLD} ⏮   Prev Track {RESET}  — переключить язык       {YELLOW}(сейчас: {get_language().upper()}){RESET}")
         print(f"  {BOLD} ⏭   Next Track {RESET}  — переключить модель     {YELLOW}(сейчас: {get_model()}){RESET}")
         print(f"  {BOLD} ⏹   Stop       {RESET}  — завершить программу")
