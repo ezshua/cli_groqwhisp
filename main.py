@@ -204,10 +204,6 @@ def transcribe_audio(audio_file_path):
     if (lang_index == 1 and model_index == 1):  
         # en + "whisper-large-v3" = перевод, а не транскрипция
         try:
-            ln = get_language() 
-            pr = "The audio is a common discussions with elements of technical terms and science language. Translate this to English."
-            md = get_model()
-            print(f"{ITALIC}ПЕРЕВОД {md} + {ln} + {pr}{RESET}")
             with open(audio_file_path, "rb") as file:
                 translations = client.audio.translations.create(
                     file=(os.path.basename(audio_file_path), file.read()),
@@ -225,10 +221,6 @@ def transcribe_audio(audio_file_path):
         
     # Иначе — обычная транскрипция, со случайным переводом иногда при en + "whisper-large-v3-turbo", так как модель может сама решить, что нужно перевести для лучшего результата
     try:
-        ln = get_language() 
-        pr = "The audio is a common discussions with elements of technical terms and science language."
-        md = get_model()
-        print(f"{ITALIC}ТРАНСКРИПЦИЯ {md} + {ln} + {pr}{RESET}")
         with open(audio_file_path, "rb") as file:
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename(audio_file_path), file.read()),
