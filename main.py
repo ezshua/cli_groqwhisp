@@ -72,8 +72,8 @@ lang_index  = 0
 model_index = 0
 user32      = ctypes.windll.user32
 
-# pyautogui.PAUSE = 0.5
-# pyautogui.FAILSAFE = True
+pyautogui.PAUSE = 0       # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
+pyautogui.FAILSAFE = True # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
 
 ALL_MEDIA_KEYS = {
     MEDIA_KEY_RECORD:       "Record",
@@ -244,7 +244,9 @@ def transcribe_audio(audio_file_path):
 
 def copy_transcription_to_clipboard(text):
     """Копирует текст в буфер обмена и вставляет в активное окно."""
+    import time # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка                  
     pyperclip.copy(text)
+    time.sleep(0.3)  # Дать время окну восстановить фокус # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
     pyautogui.hotkey("ctrl", "v")
 
 # =============================================================================
