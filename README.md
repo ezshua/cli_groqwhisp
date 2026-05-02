@@ -4,9 +4,16 @@
 
 ## Features
 
-- Record audio by holding down the **Ctrl+Alt+V** key combination (по умолчанию, можно изменить в `main.py`)
+- Hybrid input mode (single mode): hotkey + multimedia keys work simultaneously
+- Record audio by holding down **F9** (default, configurable in `main.py` or **Ctrl+Alt+V** key combination, for example)
+- Record audio by holding down **Play/Pause** multimedia key
+- Switch transcription language with **Prev Track** multimedia key
+- Switch Whisper model with **Next Track** multimedia key
+- Exit application with **Stop** multimedia key
 - Transcribe recorded audio to text using Groq's API
+- Automatic translation mode for **EN + whisper-large-v3** combination
 - Automatically copy transcription to clipboard
+- Automatically paste transcription into active window
 - Continuous operation for multiple recordings
 
 ## Prerequisites
@@ -65,17 +72,21 @@
    ```
    и запускайте его, а по окончанию работы закрывайте консольное окно
 
-2. Press and hold the **Ctrl+Alt+V** key combination to start recording.
-3. Release the **Ctrl+Alt+V** key combination to stop recording and start transcription.
-4. The transcribed text will be automatically copied to your clipboard.
-5. Repeat steps 2-4 for additional recordings.
+2. Control options in the running app:
+   - Press and hold **F9** to start recording (release to stop and send)
+   - Or use **Play/Pause** multimedia key for the same action
+   - Use **Prev Track** to switch language (`LANGUAGES` in `main.py`)
+   - Use **Next Track** to switch model (`MODELS` in `main.py`)
+   - Use **Stop** to exit the application
+3. After processing, the result text is copied to clipboard and inserted into the active window.
+4. Repeat recording as needed (the app runs continuously).
 
 ## Dependencies
 
 The project relies on the following main libraries:
 
 - `pyaudio`: For audio recording
-- `keyboard`: For detecting key presses
+- `ctypes` (Windows API): For low-level key state polling via `GetAsyncKeyState`
 - `pyautogui` and `pyperclip`: For clipboard operations
 - `groq`: For interacting with the Groq API
 
