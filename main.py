@@ -1,4 +1,5 @@
 import os
+import sys
 import ctypes
 import tempfile
 import threading
@@ -15,12 +16,12 @@ os.system('')
 # НАСТРОЙКИ
 # =============================================================================
 
-# Режим управления: "hotkey" — комбинация клавиш, "media" — мультимедиа клавиши
-INPUT_MODE = "media"  # "hotkey" | "media"
+# Единый режим управления: hotkey + мультимедиа клавиши одновременно
+POLL_INTERVAL_SEC = 0.005  # 5ms: быстрый отклик на отпускание
 
 # --- Режим hotkey ---
 # Комбинация клавиш для записи (удерживать)
-RECORD_KEY_COMBINATION = "ctrl+alt+r"
+RECORD_KEY_COMBINATION = "f9"
 
 # --- Режим media: назначение мультимедиа клавиш по функциям ---
 # VK-коды: 0xB3=Play/Pause, 0xB0=Next Track, 0xB1=Prev Track, 0xB2=Stop
@@ -31,7 +32,7 @@ MEDIA_KEY_LANG_SWITCH  = 0xB1  # Переключение языка (Prev Track
 MEDIA_KEY_EXIT         = 0xB2  # Завершение программы (Stop)
 
 # --- Языки для переключения ---
-# Коды языков Whisper: "ru", "en", "de", "fr", "uk" и др.
+# Коды языков Whisper: "ru", "en"
 # https://platform.openai.com/docs/guides/speech-to-text/supported-languages
 LANGUAGES = ["ru", "en"]
 
@@ -70,18 +71,25 @@ client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 recording   = False
 lang_index  = 0
 model_index = 0
-user32      = ctypes.windll.user32
+IS_WINDOWS  = sys.platform.startswith("win")
+user32      = ctypes.windll.user32 if IS_WINDOWS else None
+input_actions = {}
+action_prev_state = {}
+RECORD_ACTIONS = {"record_hotkey", "record_media"}
 
 pyautogui.PAUSE = 0.3       # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
 pyautogui.FAILSAFE = False # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
 
-ALL_MEDIA_KEYS = {
-    MEDIA_KEY_RECORD:       "Record",
-    MEDIA_KEY_MODEL_SWITCH: "Model Switch",
-    MEDIA_KEY_LANG_SWITCH:  "Lang Switch",
-    MEDIA_KEY_EXIT:         "Exit",
+VK_ALIASES = {
+    "ctrl": [0xA2, 0xA3],    # LCTRL, RCTRL
+    "alt": [0xA4, 0xA5],     # LALT, RALT
+    "shift": [0xA0, 0xA1],   # LSHIFT, RSHIFT
+    "win": [0x5B, 0x5C],     # LWIN, RWIN
+    "esc": [0x1B],
+    "enter": [0x0D],
+    "space": [0x20],
+    "tab": [0x09],
 }
-prev_state = {vk: False for vk in ALL_MEDIA_KEYS}
 
 # =============================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -101,62 +109,126 @@ def print_status():
     )
 
 # =============================================================================
-# ОБРАБОТЧИКИ МЕДИА-КЛАВИШ
+# ОБРАБОТЧИКИ ВВОДА
 # =============================================================================
 
-def on_key_down(vk):
-    global recording
-    if vk == MEDIA_KEY_RECORD:
-        if not recording:
-            recording = True
-            print(f"{RED}{BOLD}Запись... (Отпустите клавишу для остановки){RESET}")
+def _token_to_vk_options(token):
+    token = token.strip().lower()
+    if token in VK_ALIASES:
+        return VK_ALIASES[token]
+    if token.startswith("f") and token[1:].isdigit():
+        fn_num = int(token[1:])
+        if 1 <= fn_num <= 24:
+            return [0x6F + fn_num]  # F1..F24 -> 0x70..0x87
+    if len(token) == 1 and token.isalnum():
+        return [ord(token.upper())]
+    raise ValueError(f"Неподдерживаемый токен в RECORD_KEY_COMBINATION: {token}")
 
-def on_key_up(vk):
+
+def _parse_hotkey_combination(combination):
+    parts = [p.strip() for p in combination.split("+") if p.strip()]
+    if not parts:
+        raise ValueError("RECORD_KEY_COMBINATION не может быть пустой.")
+    return [_token_to_vk_options(part) for part in parts]
+
+
+def _is_any_vk_pressed(vk_options):
+    if not IS_WINDOWS or user32 is None:
+        return False
+    return any(bool(user32.GetAsyncKeyState(vk) & 0x8000) for vk in vk_options)
+
+
+def _is_action_pressed(binding):
+    if binding["type"] == "vk":
+        return _is_any_vk_pressed([binding["vk"]])
+    if binding["type"] == "combo":
+        if not IS_WINDOWS:
+            try:
+                import keyboard
+                return keyboard.is_pressed(binding["combo_str"])
+            except Exception:
+                return False
+        return all(_is_any_vk_pressed(vk_options) for vk_options in binding["parts"])
+    return False
+
+
+def build_input_actions():
+    actions = {
+        "record_hotkey": {"type": "combo", "parts": _parse_hotkey_combination(RECORD_KEY_COMBINATION)},
+        "record_media": {"type": "vk", "vk": MEDIA_KEY_RECORD},
+        "model_switch": {"type": "vk", "vk": MEDIA_KEY_MODEL_SWITCH},
+        "lang_switch": {"type": "vk", "vk": MEDIA_KEY_LANG_SWITCH},
+        "exit": {"type": "vk", "vk": MEDIA_KEY_EXIT},
+    }
+    actions["record_hotkey"]["combo_str"] = RECORD_KEY_COMBINATION
+    if not IS_WINDOWS:
+        # На не-Windows WinAPI-механизм media-клавиш недоступен.
+        for action_name in ("record_media", "model_switch", "lang_switch", "exit"):
+            actions.pop(action_name, None)
+    return actions
+
+
+def init_input_actions():
+    global input_actions, action_prev_state
+    input_actions = build_input_actions()
+    action_prev_state = {action_name: False for action_name in input_actions}
+
+
+def on_action_down(action_name):
+    global recording
+    if action_name in RECORD_ACTIONS and not recording:
+        recording = True
+        print(f"{RED}{BOLD}Запись... (Отпустите клавишу для остановки){RESET}")
+
+
+def _is_any_record_binding_pressed():
+    return any(_is_action_pressed(input_actions[action]) for action in RECORD_ACTIONS)
+
+
+def on_action_up(action_name):
     global recording, lang_index, model_index
-    if vk == MEDIA_KEY_RECORD:
-        if recording:
+    if action_name in RECORD_ACTIONS:
+        if recording and not _is_any_record_binding_pressed():
             recording = False  # сигнал record_audio завершить цикл
-    elif vk == MEDIA_KEY_LANG_SWITCH:
+    elif action_name == "lang_switch":
         lang_index = (lang_index + 1) % len(LANGUAGES)
         print(f"{YELLOW}Язык переключён на: {BOLD}{get_language().upper()}{RESET}")
-    elif vk == MEDIA_KEY_MODEL_SWITCH:
+    elif action_name == "model_switch":
         model_index = (model_index + 1) % len(MODELS)
         print(f"{YELLOW}Модель переключена на: {BOLD}{get_model()}{RESET}")
-    elif vk == MEDIA_KEY_EXIT:
+    elif action_name == "exit":
         print(f"\n{RED}{BOLD}Завершение программы...{RESET}")
         os._exit(0)
 
-def poll_media_keys():
-    """Опрос состояния медиа-клавиш, вызов обработчиков на фронтах."""
-    for vk in ALL_MEDIA_KEYS:
-        pressed = bool(user32.GetAsyncKeyState(vk) & 0x8000)
-        if pressed and not prev_state[vk]:
-            on_key_down(vk)
-        elif not pressed and prev_state[vk]:
-            on_key_up(vk)
-        prev_state[vk] = pressed
+
+def poll_input_actions():
+    """Единый опрос состояния действий, вызов обработчиков на фронтах."""
+    for action_name, binding in input_actions.items():
+        pressed = _is_action_pressed(binding)
+        if pressed and not action_prev_state[action_name]:
+            on_action_down(action_name)
+        elif not pressed and action_prev_state[action_name]:
+            on_action_up(action_name)
+        action_prev_state[action_name] = pressed
 
 # =============================================================================
 # АУДИО
 # =============================================================================
 
 def _poll_keys_thread():
-    """Фоновый поток опроса медиа-клавиш во время записи."""
+    """Фоновый поток опроса действий во время записи."""
     import time
     while recording:
-        poll_media_keys()
-        time.sleep(0.02)
+        poll_input_actions()
+        time.sleep(POLL_INTERVAL_SEC)
 
 
-def record_audio(sample_rate=16000, channels=1, chunk=1024):
+def record_audio(sample_rate=16000, channels=1, chunk=256):
     """
     Записывает аудио с микрофона.
-    Режим media:  пока recording=True (сбрасывается в on_key_up).
-                  Опрос клавиш идёт в отдельном потоке.
-    Режим hotkey: пока удерживается RECORD_KEY_COMBINATION.
+    Единый режим: запись идёт пока recording=True.
+    recording переключается обработчиком фронтов on_action_down/on_action_up.
     """
-    global recording
-
     p = pyaudio.PyAudio()
     stream = p.open(
         format=pyaudio.paInt16,
@@ -167,21 +239,14 @@ def record_audio(sample_rate=16000, channels=1, chunk=1024):
     )
 
     frames = []
+    poller = threading.Thread(target=_poll_keys_thread, daemon=True)
+    poller.start()
 
-    if INPUT_MODE == "media":
-        poller = threading.Thread(target=_poll_keys_thread, daemon=True)
-        poller.start()
+    while recording:
+        data = stream.read(chunk, exception_on_overflow=False)
+        frames.append(data)
 
-        while recording:
-            data = stream.read(chunk)
-            frames.append(data)
-
-        poller.join(timeout=0.1)
-    else:
-        import keyboard
-        while keyboard.is_pressed(RECORD_KEY_COMBINATION):
-            data = stream.read(chunk)
-            frames.append(data)
+    poller.join(timeout=0.1)
 
     stream.stop_stream()
     stream.close()
@@ -234,7 +299,7 @@ def transcribe_audio(audio_file_path):
                 #           the programmer mostly uses python and might mention python 
                 #           libraries or reference code in his speech.""",
                 response_format="text",
-                language=get_language() if INPUT_MODE == "media" else "ru",
+                language=get_language(),
             )
         return transcription
     except Exception as e:
@@ -256,33 +321,27 @@ def copy_transcription_to_clipboard(text):
 def main():
     import time
 
+    init_input_actions()
+
     print(f"Установить ключ в переменную окружения заранее через консоль:")
     print(f"setx GROQ_API_KEY \"your-api-key-here\"\n")
-    if INPUT_MODE == "media":
-        print(f"{BOLD}Управление:{RESET}")
-        print(f"  {BOLD} ⏯   Play/Pause{RESET}   — удерживать для записи, отпустить — отправить")
-        print(f"  {BOLD} ⏮   Prev Track {RESET}  — переключить язык       {YELLOW}(сейчас: {get_language().upper()}){RESET}")
-        print(f"  {BOLD} ⏭   Next Track {RESET}  — переключить модель     {YELLOW}(сейчас: {get_model()}){RESET}")
-        print(f"  {BOLD} ⏹   Stop       {RESET}  — завершить программу")
-        print()
+    print(f"{BOLD}Управление:{RESET}")
+    print(f"  {BOLD}{RECORD_KEY_COMBINATION.upper()}{RESET} — удерживать для записи, отпустить — отправить")
+    if IS_WINDOWS:
+        print(f"  {BOLD} ⏯   Play/Pause{RESET}          — удерживать для записи, отпустить — отправить")
+        print(f"  {BOLD} ⏮   Prev Track{RESET}          — переключить язык       {YELLOW}(сейчас: {get_language().upper()}){RESET}")
+        print(f"  {BOLD} ⏭   Next Track{RESET}          — переключить модель     {YELLOW}(сейчас: {get_model()}){RESET}")
+        print(f"  {BOLD} ⏹   Stop{RESET}                — завершить программу")
     else:
-        import keyboard
-        print(f"{ITALIC}Нажмите и удерживайте {BOLD}{RECORD_KEY_COMBINATION.upper()}{RESET}{ITALIC} для записи.{RESET}\n")
+        print(f"{YELLOW}Media-клавиши отключены: WinAPI-опрос доступен только на Windows.{RESET}")
+    print()
 
     while True:
-
-        if INPUT_MODE == "media":
-            print(f"{ITALIC}Готов.  ", end="")
-            print_status()
-            while not recording:
-                poll_media_keys()
-                time.sleep(0.02)
-        else:
-            import keyboard
-            print(f"\n{ITALIC}Готово для следующей записи. Нажмите и удерживайте "
-                  f"{BOLD}{RECORD_KEY_COMBINATION.upper()}{RESET}{ITALIC} для начала.{RESET}")
-            keyboard.wait(RECORD_KEY_COMBINATION)
-            print(f"\n{RED}{BOLD}Запись... (Отпустите {RECORD_KEY_COMBINATION.upper()} для остановки){RESET}")
+        print(f"{ITALIC}Готов.  ", end="")
+        print_status()
+        while not recording:
+            poll_input_actions()
+            time.sleep(POLL_INTERVAL_SEC)
 
         # Запись
         frames, sample_rate = record_audio()
