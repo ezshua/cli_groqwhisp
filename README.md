@@ -59,18 +59,60 @@
      export GROQ_API_KEY="your-api-key-here"
      ```
 
+## First launch on Windows (automated)
+
+You can do initial setup and first run with a single command file:
+
+```
+first_start_setup.bat
+```
+
+What it does:
+- creates `venv` (tries Python 3.11 first, then default `py`)
+- upgrades `pip`
+- installs packages from `requirements.txt`
+- checks `GROQ_API_KEY` in current session and user environment
+- asks for API key once and saves it via `setx` if missing
+- starts the app in background
+
+## Build binary for PCs without Python (Windows)
+
+To build a standalone `.exe`:
+
+```
+build_exe.bat
+```
+
+Output file:
+
+```
+dist\main.exe
+```
+
+You can copy `dist\main.exe` to another Windows PC and run it without installing Python.
+
+### How to rebuild in the future
+
+When you change `main.py` or dependencies, rebuild with:
+
+1. `first_start_setup.bat` (if environment is missing or outdated)
+2. `build_exe.bat`
+3. test `dist\main.exe` on your machine
+4. distribute the new `dist\main.exe`
+
 ## Usage
 
 1. Run the script from console:
    ```
    python main.py
    ```
-   or 
-   создайте ярлык для омандного файла 
+   or use command files:
    ```
+   first_start_setup.bat
    startw.bat
    ```
-   и запускайте его, а по окончанию работы закрывайте консольное окно
+   - `first_start_setup.bat` for first install + launch
+   - `startw.bat` for regular launch after setup
 
 2. Control options in the running app:
    - Press and hold **F9** to start recording (release to stop and send)
