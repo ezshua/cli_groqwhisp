@@ -4,3 +4,5 @@ __pycache__/
 build/
 dist/
 main.spec
+recordings_debug/
+record_debug/

@@ -1,8 +1,13 @@
 import os
 import sys
+import argparse
 import ctypes
+import shutil
+import struct
 import tempfile
 import threading
+from datetime import datetime
+from pathlib import Path
 import wave
 import pyaudio
 import pyautogui
@@ -38,6 +43,16 @@ LANGUAGES = ["ru", "en"]
 
 # --- Модели Whisper для переключения ---
 MODELS = ["whisper-large-v3-turbo", "whisper-large-v3"]
+
+# --- Отладка: сохранять WAV в директорию ---
+# Используется аргумент командной строки: --save-record-dir PATH
+RECORDINGS_DEBUG_SUBDIR = "record_debug"
+
+# --- Ввод звука (PyAudio): None = устройство по умолчанию Windows / хоста ---
+# Индекс из списка можно задать параметром запуска: --set-audio N
+AUDIO_INPUT_DEVICE_INDEX = None
+# Пик амплитуды int16 ниже этого — считаем запись «тишиной» (настройки / не тот микрофон).
+SILENCE_PEAK_THRESHOLD = 64
 
 # =============================================================================
 # КОНСТАНТЫ ОФОРМЛЕНИЯ
@@ -76,6 +91,9 @@ user32      = ctypes.windll.user32 if IS_WINDOWS else None
 input_actions = {}
 action_prev_state = {}
 RECORD_ACTIONS = {"record_hotkey", "record_media"}
+save_recordings_debug = False
+# Переопределяет директорию для сохранения WAV (если задана через CLI)
+recordings_debug_out_dir_override = None
 
 pyautogui.PAUSE = 0.3       # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
 pyautogui.FAILSAFE = False # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
@@ -215,6 +233,107 @@ def poll_input_actions():
 # АУДИО
 # =============================================================================
 
+def _resolved_input_device_index():
+    return AUDIO_INPUT_DEVICE_INDEX
+
+
+def report_audio_inputs(full_list=False):
+    """Показывает вход по умолчанию и при full_list — все устройства ввода PyAudio."""
+    p = pyaudio.PyAudio()
+    try:
+        try:
+            default = p.get_default_input_device_info()
+        except OSError:
+            default = None
+            print(f"{RED}Нет устройства ввода по умолчанию (микрофон не выбран или запрещён).{RESET}")
+
+        chosen = _resolved_input_device_index()
+        if full_list:
+            print(f"{BOLD}Устройства ввода (индекс -> имя):{RESET}")
+            found_any = False
+            for i in range(p.get_device_count()):
+                info = p.get_device_info_by_index(i)
+                if int(info.get("maxInputChannels", 0)) < 1:
+                    continue
+                found_any = True
+                mark = ""
+                if default and i == default["index"]:
+                    mark = f" {GREEN}<- default{RESET}"
+                sr = int(info.get("defaultSampleRate", 0))
+                name = str(info.get("name", ""))[:72]
+                hi = f"{CYAN}{i:3d}{RESET}"
+                print(f"  {hi}  {name}  ({sr} Hz){mark}")
+            if not found_any:
+                print(f"  {YELLOW}(нет устройств с maxInputChannels > 0){RESET}")
+            print()
+
+        if default:
+            print(
+                f"{ITALIC}Вход по умолчанию: [{default['index']}] {default['name']}{RESET}"
+            )
+        if chosen is not None:
+            try:
+                inf = p.get_device_info_by_index(chosen)
+                print(
+                    f"{YELLOW}Запись с устройства [{chosen}]: {inf['name']}{RESET}"
+                )
+            except OSError:
+                print(
+                    f"{RED}Параметр --set-audio={chosen} — устройство не найдено.{RESET}"
+                )
+        elif default:
+            print(
+                f"{ITALIC}{DGRAY}Подсказка: при тишине выберите другой индекс "
+                f"(--set-audio N), или посмотрите список: --list-audio{RESET}"
+            )
+    finally:
+        p.terminate()
+
+
+def _frames_int16_peak_abs(frames):
+    """Максимум |sample| для буферов int16 little-endian."""
+    if not frames:
+        return 0
+    raw = b"".join(frames)
+    n = len(raw) // 2
+    if n == 0:
+        return 0
+    fmt = f"<{n}h"
+    if len(raw) < n * 2:
+        return 0
+    samples = struct.unpack(fmt, raw[: n * 2])
+    return max((abs(s) for s in samples), default=0)
+
+
+def _text_is_only_thank_you(text):
+    """Whisper часто выдаёт «Thank you.» на почти пустом аудио — триггер для проверки уровня."""
+    if not isinstance(text, str):
+        return False
+    t = " ".join(text.strip().split()).lower().rstrip(".")
+    return t == "thank you"
+
+
+def report_record_level(frames):
+    """Предупреждает при почти нулевом сигнале; при отладке печатает пик."""
+    peak = _frames_int16_peak_abs(frames)
+    if peak < SILENCE_PEAK_THRESHOLD:
+        print(
+            f"{RED}{BOLD}Запись похожа на тишину{RESET} "
+            f"{RED}(пик амплитуды {peak}, порог {SILENCE_PEAK_THRESHOLD}).{RESET}"
+        )
+        print(
+            f"{ITALIC}Система: Параметры -> Конфиденциальность -> Микрофон — доступ для приложений; "
+            f"Параметры -> Система -> Звук -> нужный микрофон — проверка и громкость ввода.{RESET}"
+        )
+        print(
+            f"{ITALIC}Программа: задайте другой индекс устройства "
+            f"(--set-audio N), см. список: python main.py --list-audio{RESET}"
+        )
+    elif _recordings_debug_enabled():
+        print(f"{ITALIC}{DGRAY}Пик сигнала (int16): {peak} / 32767{RESET}")
+    return peak
+
+
 def _poll_keys_thread():
     """Фоновый поток опроса действий во время записи."""
     import time
@@ -229,14 +348,30 @@ def record_audio(sample_rate=16000, channels=1, chunk=256):
     Единый режим: запись идёт пока recording=True.
     recording переключается обработчиком фронтов on_action_down/on_action_up.
     """
+    device_index = _resolved_input_device_index()
     p = pyaudio.PyAudio()
-    stream = p.open(
+    open_kw = dict(
         format=pyaudio.paInt16,
         channels=channels,
         rate=sample_rate,
         input=True,
         frames_per_buffer=chunk,
     )
+    if device_index is not None:
+        open_kw["input_device_index"] = device_index
+    try:
+        stream = p.open(**open_kw)
+    except OSError as e:
+        p.terminate()
+        print(
+            f"{RED}Не удалось открыть микрофон (частота {sample_rate} Гц, "
+            f"устройство {device_index!r}): {e}{RESET}"
+        )
+        print(
+            f"{ITALIC}Попробуйте другой --set-audio или смените "
+            f"микрофон по умолчанию в Windows.{RESET}"
+        )
+        raise
 
     frames = []
     poller = threading.Thread(target=_poll_keys_thread, daemon=True)
@@ -253,6 +388,28 @@ def record_audio(sample_rate=16000, channels=1, chunk=256):
     p.terminate()
     print(f"{ITALIC}{YELLOW}Запись завершена.{RESET}")
     return frames, sample_rate
+
+
+def _recordings_debug_enabled():
+    return save_recordings_debug
+
+
+def save_debug_recording_copy(wav_path):
+    """Копирует WAV в директорию для отладочного анализа."""
+    if not _recordings_debug_enabled():
+        return None
+    app_dir = Path(__file__).resolve().parent
+    out_dir = (
+        Path(recordings_debug_out_dir_override).expanduser().resolve()
+        if recordings_debug_out_dir_override
+        else (app_dir / RECORDINGS_DEBUG_SUBDIR)
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = datetime.now().strftime("recording_%Y%m%d_%H%M%S_%f.wav")
+    dest = out_dir / name
+    shutil.copy2(wav_path, dest)
+    print(f"{ITALIC}{DGRAY}Отладка: аудио сохранено: {dest}{RESET}")
+    return dest
 
 
 def save_audio(frames, sample_rate):
@@ -323,8 +480,18 @@ def main():
 
     init_input_actions()
 
+    report_audio_inputs(full_list=False)
+    print()
+
     print(f"Установить ключ в переменную окружения заранее через консоль:")
     print(f"setx GROQ_API_KEY \"your-api-key-here\"\n")
+    if _recordings_debug_enabled():
+        dbg_path = (
+            Path(recordings_debug_out_dir_override).expanduser().resolve()
+            if recordings_debug_out_dir_override
+            else (Path(__file__).resolve().parent / RECORDINGS_DEBUG_SUBDIR)
+        )
+        print(f"{ITALIC}{DGRAY}Сохранение записей для отладки: {dbg_path}{RESET}")
     print(f"{BOLD}Управление:{RESET}")
     print(f"  {BOLD}{RECORD_KEY_COMBINATION.upper()}{RESET} — удерживать для записи, отпустить — отправить")
     if IS_WINDOWS:
@@ -344,10 +511,14 @@ def main():
             time.sleep(POLL_INTERVAL_SEC)
 
         # Запись
-        frames, sample_rate = record_audio()
+        try:
+            frames, sample_rate = record_audio()
+        except OSError:
+            continue
 
         # Сохранение
         temp_audio_file = save_audio(frames, sample_rate)
+        save_debug_recording_copy(temp_audio_file)
 
         # Транскрипция
         if lang_index == 1 and model_index == 1:
@@ -364,6 +535,11 @@ def main():
             else:
                 print(f"\n{BLUE}{ITALIC}Транскрипция:{RESET}")
             print(f"\t{GREEN}{BOLD}{result}{RESET}")
+            if _text_is_only_thank_you(result):
+                print(
+                    f"\n{YELLOW}{ITALIC}Ответ только «Thank you» — проверка пика амплитуды записи:{RESET}"
+                )
+                report_record_level(frames)
             # print(f"\n{ITALIC}Копируем в буфер обмена...{RESET}")
             copy_transcription_to_clipboard(result)
             if lang_index == 1 and model_index == 1:
@@ -378,4 +554,37 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument(
+        "-l",
+        "--list-audio",
+        action="store_true",
+        help="Показать доступные устройства записи",
+    )
+    parser.add_argument(
+        "-m",
+        "--set-audio",
+        dest="set_audio",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Индекс устройства записи из списка --list-audio",
+    )
+    parser.add_argument(
+        "-d",
+        "--save-record-dir",
+        dest="save_record_dir",
+        default=None,
+        metavar="PATH",
+        help="Директория для сохранения WAV. Если указана, файлы будут сохраняться в эту директорию",
+    )
+    args = parser.parse_args()
+
+    AUDIO_INPUT_DEVICE_INDEX = args.set_audio
+    recordings_debug_out_dir_override = args.save_record_dir
+    # Включаем сохранение только когда задана реальная директория.
+    save_recordings_debug = recordings_debug_out_dir_override is not None
+    if args.list_audio:
+        report_audio_inputs(full_list=True)
+        sys.exit(0)
     main()

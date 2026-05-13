@@ -114,14 +114,36 @@ When you change `main.py` or dependencies, rebuild with:
    - `first_start_setup.bat` for first install + launch
    - `startw.bat` for regular launch after setup
 
-2. Control options in the running app:
+2. Optional command-line arguments:
+   - Show help message:
+     ```
+     python main.py --help
+     ```
+   - Show available input devices:
+     ```
+     python main.py --list-audio
+     ```
+   - Select a specific input device index:
+     ```
+     python main.py --set-audio 2
+     ```
+   - Save recorded WAV files to a directory:
+     ```
+     python main.py --save-record-dir "C:\temp\groqwhisp_records"
+     ```
+   - Combine options:
+     ```
+     python main.py --set-audio 2 --save-record-dir "C:\temp\groqwhisp_records"
+     ```
+
+3. Control options in the running app:
    - Press and hold **F9** to start recording (release to stop and send)
    - Or use **Play/Pause** multimedia key for the same action
    - Use **Prev Track** to switch language (`LANGUAGES` in `main.py`)
    - Use **Next Track** to switch model (`MODELS` in `main.py`)
    - Use **Stop** to exit the application
-3. After processing, the result text is copied to clipboard and inserted into the active window.
-4. Repeat recording as needed (the app runs continuously).
+4. After processing, the result text is copied to clipboard and inserted into the active window.
+5. Repeat recording as needed (the app runs continuously).
 
 ## Dependencies
 
