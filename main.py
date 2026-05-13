@@ -471,6 +471,49 @@ def copy_transcription_to_clipboard(text):
     time.sleep(0.3)  # Дать время окну восстановить фокус # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
     pyautogui.hotkey("ctrl", "v")
 
+
+def normalize_and_validate_groq_api_key(raw_key):
+    """Нормализует и проверяет формат Groq API key."""
+    if raw_key is None:
+        return None
+    key = raw_key.strip()
+    # Часто ключ передают в кавычках из shell-скриптов/батников.
+    if len(key) >= 2 and key[0] == key[-1] and key[0] in ("'", '"'):
+        key = key[1:-1].strip()
+    if not key:
+        raise ValueError("API key пустой.")
+    if not key.startswith("gsk_"):
+        raise ValueError("Некорректный формат Groq API key: ожидается префикс 'gsk_'.")
+    return key
+
+
+def resolve_groq_api_key(arg_key):
+    """CLI-ключ имеет приоритет над переменной окружения."""
+    candidate = arg_key if arg_key is not None else os.environ.get("GROQ_API_KEY")
+    return normalize_and_validate_groq_api_key(candidate)
+
+
+def mask_groq_api_key(key):
+    """Показывает ключ в формате: gsk_abc...xyz."""
+    suffix = key[4:] if key.startswith("gsk_") else key
+    first = suffix[:3]
+    last = suffix[-3:] if len(suffix) >= 3 else suffix
+    return f"gsk_{first}...{last}"
+
+
+def print_groq_key_setup_hint():
+    """Расширенная подсказка по установке Groq API key."""
+    print(f"{ITALIC}Как задать Groq API key:{RESET}")
+    print(f"  1) Через аргумент запуска (приоритет выше):")
+    print(f"     python main.py --groq-api-key \"gsk_...\"")
+    print(f"  2) Через переменную окружения (Windows):")
+    print(f"     setx GROQ_API_KEY \"gsk_...\"")
+    print(f"     # затем откройте новую консоль")
+    print(f"  3) Через переменную окружения (macOS/Linux):")
+    print(f"     export GROQ_API_KEY=\"gsk_...\"")
+    print()
+     
+
 # =============================================================================
 # ОСНОВНОЙ ЦИКЛ
 # =============================================================================
@@ -483,8 +526,9 @@ def main():
     report_audio_inputs(full_list=False)
     print()
 
-    print(f"Установить ключ в переменную окружения заранее через консоль:")
-    print(f"setx GROQ_API_KEY \"your-api-key-here\"\n")
+    # print(f"Ключ можно передать аргументом --groq-api-key (приоритет выше),")
+    # print(f"или установить в переменную окружения заранее через консоль:")
+    # print(f"setx GROQ_API_KEY \"your-api-key-here\"\n")
     if _recordings_debug_enabled():
         dbg_path = (
             Path(recordings_debug_out_dir_override).expanduser().resolve()
@@ -571,6 +615,14 @@ if __name__ == "__main__":
         help="Индекс устройства записи из списка --list-audio",
     )
     parser.add_argument(
+        "-g",
+        "--groq-api-key",
+        dest="groq_api_key",
+        default=None,
+        metavar="KEY",
+        help="Groq API key (формат: gsk_...). Имеет приоритет над переменной окружения GROQ_API_KEY",
+    )
+    parser.add_argument(
         "-d",
         "--save-record-dir",
         dest="save_record_dir",
@@ -579,6 +631,26 @@ if __name__ == "__main__":
         help="Директория для сохранения WAV. Если указана, файлы будут сохраняться в эту директорию",
     )
     args = parser.parse_args()
+
+    try:
+        resolved_groq_api_key = resolve_groq_api_key(args.groq_api_key)
+    except ValueError as e:
+        print(f"{RED}Ошибка ключа Groq: {e}{RESET}")
+        print_groq_key_setup_hint()
+        sys.exit(2)
+
+    if resolved_groq_api_key is None:
+        print(f"{RED}Groq API key не найден.{RESET}")
+        print_groq_key_setup_hint()
+        sys.exit(2)
+
+    client = Groq(api_key=resolved_groq_api_key)
+    print(
+        f"{ITALIC}Используется Groq API key: "
+        f"{mask_groq_api_key(resolved_groq_api_key)}{RESET}"
+        f"\n{ITALIC}{DGRAY}Подсказка: Ключ можно передать аргументом --groq-api-key, "
+        f"или установить в переменную окружения GROQ_API_KEY{RESET}"
+    )
 
     AUDIO_INPUT_DEVICE_INDEX = args.set_audio
     recordings_debug_out_dir_override = args.save_record_dir

@@ -19,7 +19,7 @@
 ## Prerequisites
 
 - Python 3.7 or higher
-- A Groq API key (set as an environment variable)
+- A Groq API key (`gsk_...`)
 
 ## Installation
 
@@ -49,7 +49,7 @@
    pip install -r requirements.txt
    ```
 
-5. Set up your Groq API key as an environment variable:
+5. Set up your Groq API key (recommended: environment variable):
    - On Windows:
      ```
      setx GROQ_API_KEY "your-api-key-here"
@@ -58,6 +58,7 @@
      ```
      export GROQ_API_KEY="your-api-key-here"
      ```
+   You can also pass the key directly at launch with `--groq-api-key`.
 
 ## First launch on Windows (automated)
 
@@ -131,10 +132,21 @@ When you change `main.py` or dependencies, rebuild with:
      ```
      python main.py --save-record-dir "C:\temp\groqwhisp_records"
      ```
+   - Pass Groq API key directly in CLI (has priority over `GROQ_API_KEY`):
+     ```
+     python main.py --groq-api-key "gsk_..."
+     ```
    - Combine options:
      ```
-     python main.py --set-audio 2 --save-record-dir "C:\temp\groqwhisp_records"
+     python main.py --set-audio 2 --save-record-dir "C:\temp\groqwhisp_records" --groq-api-key "gsk_..."
      ```
+
+### Groq API key behavior
+
+- Key format must start with `gsk_`.
+- Key source priority: `--groq-api-key` first, then `GROQ_API_KEY`.
+- On startup, app prints masked key preview in this format: `gsk_abc...xyz`.
+- If key is missing or invalid, app shows an extended setup hint and exits.
 
 3. Control options in the running app:
    - Press and hold **F9** to start recording (release to stop and send)
