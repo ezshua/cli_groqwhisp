@@ -9,6 +9,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, List, Dict, Tuple, Any
 import wave
 import pyaudio
 import pyautogui
@@ -57,7 +58,7 @@ RECORDINGS_DEBUG_SUBDIR = "record_debug"
 
 # --- Ввод звука (PyAudio): None = устройство по умолчанию Windows / хоста ---
 # Индекс из списка можно задать параметром запуска: --set-audio N
-AUDIO_INPUT_DEVICE_INDEX = None
+AUDIO_INPUT_DEVICE_INDEX: Optional[int] = None
 # Пик амплитуды int16 ниже этого — считаем запись «тишиной» (настройки / не тот микрофон).
 SILENCE_PEAK_THRESHOLD = 64
 
@@ -122,13 +123,23 @@ VK_ALIASES = {
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # =============================================================================
 
-def get_language():
+def get_language() -> str:
+    """Возвращает текущий выбранный язык."""
     return LANGUAGES[lang_index]
 
-def get_model():
+def get_model() -> str:
+    """Возвращает текущую выбранную модель Whisper."""
     return MODELS[model_index]
 
-def print_status():
+def _is_translation_mode() -> bool:
+    """Проверяет, включён ли режим перевода (en + whisper-large-v3).
+    
+    Returns:
+        True, если текущая комбинация языка и модели означает перевод, а не транскрипцию
+    """
+    return get_language() == "en" and get_model() == "whisper-large-v3"
+
+def print_status() -> None:
     """Печатает текущий язык и модель."""
     print(
         f"{ITALIC}Язык: {BOLD}{get_language().upper()}{RESET}  "
@@ -139,7 +150,16 @@ def print_status():
 # ОБРАБОТЧИКИ ВВОДА
 # =============================================================================
 
-def _token_to_vk_options(token):
+def _token_to_vk_options(token: str) -> List[int]:
+    """Преобразует токен клавиши (например, 'ctrl', 'f9') в список VK-кодов.
+    
+    Args:
+        token: строка с названием клавиши ('ctrl', 'alt', 'f1-f24', или одиночный символ)
+    Returns:
+        Список VK-кодов для данной клавиши
+    Raises:
+        ValueError: если токен не распознан
+    """
     token = token.strip().lower()
     if token in VK_ALIASES:
         return VK_ALIASES[token]
@@ -152,20 +172,43 @@ def _token_to_vk_options(token):
     raise ValueError(f"Неподдерживаемый токен в RECORD_KEY_COMBINATION: {token}")
 
 
-def _parse_hotkey_combination(combination):
+def _parse_hotkey_combination(combination: str) -> List[List[int]]:
+    """Парсит строку комбинации клавиш (например, 'ctrl+shift+f9') в список VK-кодов.
+    
+    Args:
+        combination: строка с комбинацией клавиш, разделённых '+'
+    Returns:
+        Список списков VK-кодов для каждой части комбинации
+    Raises:
+        ValueError: если комбинация пустая или содержит неподдерживаемые токены
+    """
     parts = [p.strip() for p in combination.split("+") if p.strip()]
     if not parts:
         raise ValueError("RECORD_KEY_COMBINATION не может быть пустой.")
     return [_token_to_vk_options(part) for part in parts]
 
 
-def _is_any_vk_pressed(vk_options):
+def _is_any_vk_pressed(vk_options: List[int]) -> bool:
+    """Проверяет, нажата ли хотя бы одна из клавиш по списку VK-кодов.
+    
+    Args:
+        vk_options: список VK-кодов для проверки
+    Returns:
+        True, если хотя бы одна клавиша нажата
+    """
     if not IS_WINDOWS or user32 is None:
         return False
     return any(bool(user32.GetAsyncKeyState(vk) & 0x8000) for vk in vk_options)
 
 
-def _is_action_pressed(binding):
+def _is_action_pressed(binding: Dict[str, Any]) -> bool:
+    """Проверяет, нажато ли действие (hotkey или media-клавиша).
+    
+    Args:
+        binding: словарь с описанием привязки (type: 'vk' или 'combo')
+    Returns:
+        True, если действие активно (клавиша/комбинация нажата)
+    """
     if binding["type"] == "vk":
         return _is_any_vk_pressed([binding["vk"]])
     if binding["type"] == "combo":
@@ -179,7 +222,12 @@ def _is_action_pressed(binding):
     return False
 
 
-def build_input_actions():
+def build_input_actions() -> Dict[str, Dict[str, Any]]:
+    """Создаёт словарь действий с привязками к клавишам.
+    
+    Returns:
+        Словарь {action_name: binding}, где binding содержит type и параметры привязки
+    """
     actions = {
         "record_hotkey": {"type": "combo", "parts": _parse_hotkey_combination(RECORD_KEY_COMBINATION)},
         "record_media": {"type": "vk", "vk": MEDIA_KEY_RECORD},
@@ -195,23 +243,39 @@ def build_input_actions():
     return actions
 
 
-def init_input_actions():
+def init_input_actions() -> None:
+    """Инициализирует систему обработки ввода: создаёт действия и начальное состояние."""
     global input_actions, action_prev_state
     input_actions = build_input_actions()
     action_prev_state = {action_name: False for action_name in input_actions}
 
 
-def on_action_down(action_name):
+def on_action_down(action_name: str) -> None:
+    """Обработчик нажатия действия (фронт вниз).
+    
+    Args:
+        action_name: имя действия ('record_hotkey', 'record_media', и т.д.)
+    """
     if action_name in RECORD_ACTIONS and not recording_event.is_set():
         recording_event.set()
         print(f"{RED}{BOLD}Запись... (Отпустите клавишу для остановки){RESET}")
 
 
-def _is_any_record_binding_pressed():
+def _is_any_record_binding_pressed() -> bool:
+    """Проверяет, нажата ли хотя бы одна клавиша записи (hotkey или media).
+    
+    Returns:
+        True, если любая клавиша записи активна
+    """
     return any(_is_action_pressed(input_actions[action]) for action in RECORD_ACTIONS)
 
 
-def on_action_up(action_name):
+def on_action_up(action_name: str) -> None:
+    """Обработчик отпускания действия (фронт вверх).
+    
+    Args:
+        action_name: имя действия ('record_hotkey', 'record_media', 'lang_switch', и т.д.)
+    """
     global lang_index, model_index
     if action_name in RECORD_ACTIONS:
         if recording_event.is_set() and not _is_any_record_binding_pressed():
@@ -228,7 +292,7 @@ def on_action_up(action_name):
         exit_requested = True
 
 
-def poll_input_actions():
+def poll_input_actions() -> None:
     """Единый опрос состояния действий, вызов обработчиков на фронтах."""
     for action_name, binding in input_actions.items():
         pressed = _is_action_pressed(binding)
@@ -242,11 +306,7 @@ def poll_input_actions():
 # АУДИО
 # =============================================================================
 
-def _resolved_input_device_index():
-    return AUDIO_INPUT_DEVICE_INDEX
-
-
-def report_audio_inputs(full_list=False):
+def report_audio_inputs(full_list: bool = False) -> None:
     """Показывает вход по умолчанию и при full_list — все устройства ввода PyAudio."""
     p = pyaudio.PyAudio()
     try:
@@ -256,7 +316,7 @@ def report_audio_inputs(full_list=False):
             default = None
             print(f"{RED}Нет устройства ввода по умолчанию (микрофон не выбран или запрещён).{RESET}")
 
-        chosen = _resolved_input_device_index()
+        chosen = AUDIO_INPUT_DEVICE_INDEX
         if full_list:
             print(f"{BOLD}Устройства ввода (индекс -> имя):{RESET}")
             found_any = False
@@ -299,7 +359,7 @@ def report_audio_inputs(full_list=False):
         p.terminate()
 
 
-def _frames_int16_peak_abs(frames):
+def _frames_int16_peak_abs(frames: List[bytes]) -> int:
     """Максимум |sample| для буферов int16 little-endian."""
     if not frames:
         return 0
@@ -314,7 +374,7 @@ def _frames_int16_peak_abs(frames):
     return max((abs(s) for s in samples), default=0)
 
 
-def _text_is_only_thank_you(text):
+def _text_is_only_thank_you(text: str) -> bool:
     """Whisper часто выдаёт «Thank you.» на почти пустом аудио — триггер для проверки уровня."""
     if not isinstance(text, str):
         return False
@@ -322,7 +382,7 @@ def _text_is_only_thank_you(text):
     return t == "thank you"
 
 
-def report_record_level(frames):
+def report_record_level(frames: List[bytes]) -> int:
     """Предупреждает при почти нулевом сигнале; при отладке печатает пик."""
     peak = _frames_int16_peak_abs(frames)
     if peak < SILENCE_PEAK_THRESHOLD:
@@ -338,25 +398,25 @@ def report_record_level(frames):
             f"{ITALIC}Программа: задайте другой индекс устройства "
             f"(--set-audio N), см. список: python main.py --list-audio{RESET}"
         )
-    elif _recordings_debug_enabled():
+    elif save_recordings_debug:
         print(f"{ITALIC}{DGRAY}Пик сигнала (int16): {peak} / 32767{RESET}")
     return peak
 
 
-def _poll_keys_thread():
+def _poll_keys_thread() -> None:
     """Фоновый поток опроса действий во время записи."""
     while recording_event.is_set():
         poll_input_actions()
         time.sleep(POLL_INTERVAL_SEC)
 
 
-def record_audio(sample_rate=AUDIO_SAMPLE_RATE, channels=AUDIO_CHANNELS, chunk=AUDIO_CHUNK_FRAMES):
+def record_audio(sample_rate: int = AUDIO_SAMPLE_RATE, channels: int = AUDIO_CHANNELS, chunk: int = AUDIO_CHUNK_FRAMES) -> Tuple[List[bytes], int]:
     """
     Записывает аудио с микрофона.
     Единый режим: запись идёт пока recording_event установлен.
     recording_event переключается обработчиком фронтов on_action_down/on_action_up.
     """
-    device_index = _resolved_input_device_index()
+    device_index = AUDIO_INPUT_DEVICE_INDEX
     p = pyaudio.PyAudio()
     open_kw = dict(
         format=pyaudio.paInt16,
@@ -397,14 +457,9 @@ def record_audio(sample_rate=AUDIO_SAMPLE_RATE, channels=AUDIO_CHANNELS, chunk=A
     print(f"{ITALIC}{YELLOW}Запись завершена.{RESET}")
     return frames, sample_rate
 
-
-def _recordings_debug_enabled():
-    return save_recordings_debug
-
-
-def save_debug_recording_copy(wav_path):
+def save_debug_recording_copy(wav_path: str) -> Optional[Path]:
     """Копирует WAV в директорию для отладочного анализа."""
-    if not _recordings_debug_enabled():
+    if not save_recordings_debug:
         return None
     app_dir = Path(__file__).resolve().parent
     out_dir = (
@@ -419,8 +474,7 @@ def save_debug_recording_copy(wav_path):
     print(f"{ITALIC}{DGRAY}Отладка: аудио сохранено: {dest}{RESET}")
     return dest
 
-
-def save_audio(frames, sample_rate, sample_width=AUDIO_SAMPLE_WIDTH):
+def save_audio(frames: List[bytes], sample_rate: int, sample_width: int = AUDIO_SAMPLE_WIDTH) -> str:
     """Сохраняет записанное аудио во временный WAV-файл.
     
     Args:
@@ -437,29 +491,41 @@ def save_audio(frames, sample_rate, sample_width=AUDIO_SAMPLE_WIDTH):
         wf.close()
         return temp_audio.name
 
-
-def translate_audio(audio_file_path):
-    """Переводит аудио через Groq Whisper."""
-    if (lang_index == 1 and model_index == 1):  
-        # en + "whisper-large-v3" = перевод, а не транскрипция
-        try:
-            with open(audio_file_path, "rb") as file:
-                translations = client.audio.translations.create(
-                    file=(os.path.basename(audio_file_path), file.read()),
-                    model=get_model(),
-                    prompt="The audio is a common discussions with elements of technical terms and science language. Translate this to English.",
-                    # prompt="""The audio is by a programmer discussing programming issues, 
-                    #           the programmer mostly uses python and might mention python 
-                    #           libraries or reference code in his speech.""",
-                    response_format="text",
-                )
-            return translations
-        except Exception as e:
-            print(f"{ITALIC}{RED}Ошибка перевода: {str(e)}{RESET}")
-            return None
+def translate_audio(audio_file_path: str) -> Optional[str]:
+    """Переводит аудио через Groq Whisper.
+    
+    Args:
+        audio_file_path: путь к WAV-файлу для перевода
+    Returns:
+        Текст перевода или None при ошибке
+    """
+    try:
+        with open(audio_file_path, "rb") as file:
+            translations = client.audio.translations.create(
+                file=(os.path.basename(audio_file_path), file.read()),
+                model=get_model(),
+                prompt="The audio is a common discussions with elements of technical terms and science language. Translate this to English.",
+                # prompt="""The audio is by a programmer discussing programming issues, 
+                #           the programmer mostly uses python and might mention python 
+                #           libraries or reference code in his speech.""",
+                response_format="text",
+            )
+        return translations
+    except Exception as e:
+        print(f"{ITALIC}{RED}Ошибка перевода: {str(e)}{RESET}")
+        return None
         
-def transcribe_audio(audio_file_path):
-    # Иначе — обычная транскрипция, со случайным переводом иногда при en + "whisper-large-v3-turbo", так как модель может сама решить, что нужно перевести для лучшего результата
+def transcribe_audio(audio_file_path: str) -> Optional[str]:
+    """Транскрибирует аудио через Groq Whisper API.
+    
+    Args:
+        audio_file_path: путь к WAV-файлу для транскрипции
+    Returns:
+        Текст транскрипции или None при ошибке
+    Note:
+        Иногда при en + whisper-large-v3-turbo модель может сама решить перевести
+        текст для лучшего результата.
+    """
     try:
         with open(audio_file_path, "rb") as file:
             transcription = client.audio.transcriptions.create(
@@ -477,15 +543,13 @@ def transcribe_audio(audio_file_path):
         print(f"{ITALIC}{RED}Ошибка транскрибации: {str(e)}{RESET}")
         return None
 
-
-def copy_transcription_to_clipboard(text):
+def copy_transcription_to_clipboard(text: str) -> None:
     """Копирует текст в буфер обмена и вставляет в активное окно."""
     pyperclip.copy(text)
     time.sleep(0.3)  # Дать время окну восстановить фокус # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
     pyautogui.hotkey("ctrl", "v")
 
-
-def normalize_and_validate_groq_api_key(raw_key):
+def normalize_and_validate_groq_api_key(raw_key: Optional[str]) -> Optional[str]:
     """Нормализует и проверяет формат Groq API key."""
     if raw_key is None:
         return None
@@ -499,22 +563,19 @@ def normalize_and_validate_groq_api_key(raw_key):
         raise ValueError("Некорректный формат Groq API key: ожидается префикс 'gsk_'.")
     return key
 
-
-def resolve_groq_api_key(arg_key):
+def resolve_groq_api_key(arg_key: Optional[str]) -> Optional[str]:
     """CLI-ключ имеет приоритет над переменной окружения."""
     candidate = arg_key if arg_key is not None else os.environ.get("GROQ_API_KEY")
     return normalize_and_validate_groq_api_key(candidate)
 
-
-def mask_groq_api_key(key):
+def mask_groq_api_key(key: str) -> str:
     """Показывает ключ в формате: gsk_abc...xyz."""
     suffix = key[4:] if key.startswith("gsk_") else key
     first = suffix[:3]
     last = suffix[-3:] if len(suffix) >= 3 else suffix
     return f"gsk_{first}...{last}"
 
-
-def print_groq_key_setup_hint():
+def print_groq_key_setup_hint() -> None:
     """Расширенная подсказка по установке Groq API key."""
     print(f"{ITALIC}Как задать Groq API key:{RESET}")
     print(f"  1) Через аргумент запуска (приоритет выше):")
@@ -526,12 +587,12 @@ def print_groq_key_setup_hint():
     print(f"     export GROQ_API_KEY=\"gsk_...\"")
     print()
      
-
 # =============================================================================
 # ОСНОВНОЙ ЦИКЛ
 # =============================================================================
 
-def main():
+def main() -> None:
+    """Основной цикл программы: инициализация, ожидание записи, транскрипция, вставка."""
     init_input_actions()
 
     report_audio_inputs(full_list=False)
@@ -540,7 +601,7 @@ def main():
     # print(f"Ключ можно передать аргументом --groq-api-key (приоритет выше),")
     # print(f"или установить в переменную окружения заранее через консоль:")
     # print(f"setx GROQ_API_KEY \"your-api-key-here\"\n")
-    if _recordings_debug_enabled():
+    if save_recordings_debug:
         dbg_path = (
             Path(recordings_debug_out_dir_override).expanduser().resolve()
             if recordings_debug_out_dir_override
@@ -583,9 +644,7 @@ def main():
         save_debug_recording_copy(temp_audio_file)
 
         # Транскрипция
-        # if lang_index == 1 and model_index == 1:
-        if get_language() == "en" and get_model() == "whisper-large-v3":
-
+        if _is_translation_mode():
             print(f"{ITALIC}{CYAN}Переводим аудио ({get_model()}, {get_language().upper()})...{RESET}")
             result = translate_audio(temp_audio_file)
         else:
@@ -594,7 +653,7 @@ def main():
 
         # Результат
         if result:
-            if lang_index == 1 and model_index == 1:
+            if _is_translation_mode():
                 print(f"\n{BLUE}{ITALIC}Перевод:{RESET}")
             else:
                 print(f"\n{BLUE}{ITALIC}Транскрипция:{RESET}")
@@ -606,7 +665,7 @@ def main():
                 report_record_level(frames)
             # print(f"\n{ITALIC}Копируем в буфер обмена...{RESET}")
             copy_transcription_to_clipboard(result)
-            if lang_index == 1 and model_index == 1:
+            if _is_translation_mode():
                 print(f"\n{ITALIC}{DGRAY}Перевод скопирован и вставлен{RESET}")
             else:
                 print(f"\n{ITALIC}{DGRAY}Транскрипция скопирована и вставлена{RESET}")
@@ -617,6 +676,9 @@ def main():
         os.unlink(temp_audio_file)
 
 
+# =============================================================================
+# module init
+# =============================================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument(
