@@ -6,6 +6,7 @@ import shutil
 import struct
 import tempfile
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 import wave
@@ -27,6 +28,12 @@ POLL_INTERVAL_SEC = 0.005  # 5ms: быстрый отклик на отпуск�
 # --- Режим hotkey ---
 # Комбинация клавиш для записи (удерживать)
 RECORD_KEY_COMBINATION = "f9"
+
+# --- Параметры аудио ---
+AUDIO_SAMPLE_RATE   = 16000  # Whisper оптимально работает на 16 кГц
+AUDIO_CHANNELS      = 1      # моно
+AUDIO_CHUNK_FRAMES  = 256    # ~16ms при 16кГц; малый chunk = быстрый отклик на отпускание
+AUDIO_SAMPLE_WIDTH  = 2      # paInt16 = 2 байта
 
 # --- Режим media: назначение мультимедиа клавиш по функциям ---
 # VK-коды: 0xB3=Play/Pause, 0xB0=Next Track, 0xB1=Prev Track, 0xB2=Stop
@@ -77,13 +84,15 @@ DGRAY     = "\033[90m"
 
 # Установить ключ заранее через консоль:
 # setx GROQ_API_KEY "your-api-key-here"
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+# client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+client = None
 
 # =============================================================================
 # СОСТОЯНИЕ
 # =============================================================================
 
-recording   = False
+recording_event = threading.Event()  # Событие для межпоточной синхронизации записи
+exit_requested = False  # Флаг для graceful shutdown
 lang_index  = 0
 model_index = 0
 IS_WINDOWS  = sys.platform.startswith("win")
@@ -162,7 +171,7 @@ def _is_action_pressed(binding):
     if binding["type"] == "combo":
         if not IS_WINDOWS:
             try:
-                import keyboard
+                import keyboard  # Опциональная зависимость, только для не-Windows
                 return keyboard.is_pressed(binding["combo_str"])
             except Exception:
                 return False
@@ -193,9 +202,8 @@ def init_input_actions():
 
 
 def on_action_down(action_name):
-    global recording
-    if action_name in RECORD_ACTIONS and not recording:
-        recording = True
+    if action_name in RECORD_ACTIONS and not recording_event.is_set():
+        recording_event.set()
         print(f"{RED}{BOLD}Запись... (Отпустите клавишу для остановки){RESET}")
 
 
@@ -204,10 +212,10 @@ def _is_any_record_binding_pressed():
 
 
 def on_action_up(action_name):
-    global recording, lang_index, model_index
+    global lang_index, model_index
     if action_name in RECORD_ACTIONS:
-        if recording and not _is_any_record_binding_pressed():
-            recording = False  # сигнал record_audio завершить цикл
+        if recording_event.is_set() and not _is_any_record_binding_pressed():
+            recording_event.clear()  # сигнал record_audio завершить цикл
     elif action_name == "lang_switch":
         lang_index = (lang_index + 1) % len(LANGUAGES)
         print(f"{YELLOW}Язык переключён на: {BOLD}{get_language().upper()}{RESET}")
@@ -215,8 +223,9 @@ def on_action_up(action_name):
         model_index = (model_index + 1) % len(MODELS)
         print(f"{YELLOW}Модель переключена на: {BOLD}{get_model()}{RESET}")
     elif action_name == "exit":
+        global exit_requested
         print(f"\n{RED}{BOLD}Завершение программы...{RESET}")
-        os._exit(0)
+        exit_requested = True
 
 
 def poll_input_actions():
@@ -336,17 +345,16 @@ def report_record_level(frames):
 
 def _poll_keys_thread():
     """Фоновый поток опроса действий во время записи."""
-    import time
-    while recording:
+    while recording_event.is_set():
         poll_input_actions()
         time.sleep(POLL_INTERVAL_SEC)
 
 
-def record_audio(sample_rate=16000, channels=1, chunk=256):
+def record_audio(sample_rate=AUDIO_SAMPLE_RATE, channels=AUDIO_CHANNELS, chunk=AUDIO_CHUNK_FRAMES):
     """
     Записывает аудио с микрофона.
-    Единый режим: запись идёт пока recording=True.
-    recording переключается обработчиком фронтов on_action_down/on_action_up.
+    Единый режим: запись идёт пока recording_event установлен.
+    recording_event переключается обработчиком фронтов on_action_down/on_action_up.
     """
     device_index = _resolved_input_device_index()
     p = pyaudio.PyAudio()
@@ -377,7 +385,7 @@ def record_audio(sample_rate=16000, channels=1, chunk=256):
     poller = threading.Thread(target=_poll_keys_thread, daemon=True)
     poller.start()
 
-    while recording:
+    while recording_event.is_set():
         data = stream.read(chunk, exception_on_overflow=False)
         frames.append(data)
 
@@ -412,12 +420,18 @@ def save_debug_recording_copy(wav_path):
     return dest
 
 
-def save_audio(frames, sample_rate):
-    """Сохраняет записанное аудио во временный WAV-файл."""
+def save_audio(frames, sample_rate, sample_width=AUDIO_SAMPLE_WIDTH):
+    """Сохраняет записанное аудио во временный WAV-файл.
+    
+    Args:
+        frames: список байтовых фреймов аудио
+        sample_rate: частота дискретизации (обычно 16000)
+        sample_width: размер сэмпла в байтах (2 для paInt16)
+    """
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
         wf = wave.open(temp_audio.name, "wb")
-        wf.setnchannels(1)
-        wf.setsampwidth(pyaudio.PyAudio().get_sample_size(pyaudio.paInt16))
+        wf.setnchannels(AUDIO_CHANNELS)
+        wf.setsampwidth(sample_width)  # paInt16 = 2 байта
         wf.setframerate(sample_rate)
         wf.writeframes(b"".join(frames))
         wf.close()
@@ -466,7 +480,6 @@ def transcribe_audio(audio_file_path):
 
 def copy_transcription_to_clipboard(text):
     """Копирует текст в буфер обмена и вставляет в активное окно."""
-    import time # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка                  
     pyperclip.copy(text)
     time.sleep(0.3)  # Дать время окну восстановить фокус # глюк со вставкой - включать и откючать в произвольном порядке если не работает автовставка
     pyautogui.hotkey("ctrl", "v")
@@ -519,8 +532,6 @@ def print_groq_key_setup_hint():
 # =============================================================================
 
 def main():
-    import time
-
     init_input_actions()
 
     report_audio_inputs(full_list=False)
@@ -548,11 +559,18 @@ def main():
     print()
 
     while True:
+        if exit_requested:
+            break
         print(f"{ITALIC}Готов.  ", end="")
         print_status()
-        while not recording:
+        while not recording_event.is_set():
+            if exit_requested:
+                break
             poll_input_actions()
             time.sleep(POLL_INTERVAL_SEC)
+        
+        if exit_requested:
+            break
 
         # Запись
         try:
@@ -565,7 +583,9 @@ def main():
         save_debug_recording_copy(temp_audio_file)
 
         # Транскрипция
-        if lang_index == 1 and model_index == 1:
+        # if lang_index == 1 and model_index == 1:
+        if get_language() == "en" and get_model() == "whisper-large-v3":
+
             print(f"{ITALIC}{CYAN}Переводим аудио ({get_model()}, {get_language().upper()})...{RESET}")
             result = translate_audio(temp_audio_file)
         else:
